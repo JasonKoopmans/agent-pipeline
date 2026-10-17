@@ -153,6 +153,13 @@ def main() -> int:
     ap.add_argument("--homepage", default="https://github.com/JasonKoopmans/agent-pipeline")
     args = ap.parse_args()
 
+    # Refuse before creating anything: a private key written where sops has no
+    # rule stays plaintext on disk (a relative --out from the wrong directory).
+    args.out = args.out.expanduser().resolve()
+    if not shutil.which("sops"):
+        raise SystemExit("sops is not installed; nothing created")
+    if not any((d / ".sops.yaml").is_file() for d in [args.out, *args.out.parents]):
+        raise SystemExit(f"no .sops.yaml at or above {args.out}; run from the GitOps repo or pass an absolute --out inside it. Nothing created.")
     args.out.mkdir(parents=True, exist_ok=True)
     values: dict[str, dict] = {}
     for role in args.roles:
