@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - run: pip install pytest pyyaml
       - run: python -m pytest -q   # includes chart render tests (needs helm)
 
@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - name: lint and render
         run: |
           set -euo pipefail
