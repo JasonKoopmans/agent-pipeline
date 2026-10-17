@@ -55,6 +55,7 @@ def test_credentials_never_reach_model_containers(sets):
         assert mounts(cs["agent"])["control"] is True and "verify" not in mounts(cs["agent"])
         assert mounts(cs["publish"])["work"] is True
         assert spec["automountServiceAccountToken"] is False
+        assert {"name": "ndots", "value": "1"} in spec["dnsConfig"]["options"], role
 
 
 def test_images_core_for_token_stages_stack_for_model(sets=APPS):

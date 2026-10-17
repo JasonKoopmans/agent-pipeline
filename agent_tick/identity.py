@@ -60,7 +60,11 @@ def _api(method: str, path: str, bearer: str, body: dict | None = None) -> dict:
         with urllib.request.urlopen(req, timeout=20) as resp:
             return json.loads(resp.read() or b"{}")
     except urllib.error.HTTPError as exc:
-        raise IdentityError(f"GitHub App API {method} {path} failed: HTTP {exc.code}") from None
+        hint = " (is the App installed on this repository?)" if exc.code == 404 and path.endswith("/installation") else ""
+        raise IdentityError(f"GitHub App API {method} {path} failed: HTTP {exc.code}{hint}") from None
+    except (urllib.error.URLError, TimeoutError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise IdentityError(f"GitHub App API {method} {path} unreachable: {reason} (check the egress policy)") from None
 
 
 def installation_token(cfg: Pipeline, role: Role, app_id: str, key_file: Path) -> str:

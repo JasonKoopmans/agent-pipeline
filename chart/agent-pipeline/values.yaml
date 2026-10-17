@@ -6,7 +6,7 @@ image:
   repository: ghcr.io/jasonkoopmans/agent-runner
   # Tags are <version>-<variant>: core, a stack (dotnet10, ...) or a toolset
   # (tester-dotnet10, ...). See images/ in the agent-pipeline repo.
-  version: "0.1.0"
+  version: "0.1.1"
   pullPolicy: IfNotPresent
 
 # Variant used by roles that build or test code unless a role sets `image`.

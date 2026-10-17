@@ -59,6 +59,13 @@ spec:
           restartPolicy: Never
           automountServiceAccountToken: false
           enableServiceLinks: false
+          # Resolve dotted names as-is first. With the default ndots:5 a lookup of
+          # api.github.com tries <name>.<ns>.svc.cluster.local first; if the cluster
+          # DNS answers that, Cilium records the IPs under the suffixed name and the
+          # egress policy's toFQDNs (matchName: api.github.com) never matches.
+          dnsConfig:
+            options:
+              - {name: ndots, value: "1"}
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

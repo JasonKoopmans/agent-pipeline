@@ -171,3 +171,14 @@ def test_app_role_without_mounted_key_refuses_pat(app_cfg, monkeypatch):
     monkeypatch.setenv("GH_TOKEN", "pat")
     with pytest.raises(identity.IdentityError):
         identity.github_token(app_cfg, app_cfg.role("planner"))
+
+
+def test_unreachable_github_is_a_clean_identity_error(app_cfg, rsa_key, monkeypatch):
+    import urllib.error
+
+    def boom(*a, **k):
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(identity.urllib.request, "urlopen", boom)
+    with pytest.raises(identity.IdentityError, match="unreachable"):
+        identity.installation_token(app_cfg, app_cfg.role("planner"), "1", rsa_key)
