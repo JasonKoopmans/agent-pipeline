@@ -16,7 +16,9 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/agent-runner
+  # GHCR names must be lowercase; github.repository_owner keeps the account's casing.
+  IMAGE: ghcr.io/jasonkoopmans/agent-runner
+  CHARTS: oci://ghcr.io/jasonkoopmans/charts
   PUSH: ${{ github.event_name != 'pull_request' }}
   DEVCONTAINER_CLI: "@devcontainers/cli@0.80.1"
 
@@ -117,4 +119,4 @@ jobs:
           set -euo pipefail
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
           helm package chart/agent-pipeline -d /tmp/chart
-          helm push /tmp/chart/agent-pipeline-*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          helm push /tmp/chart/agent-pipeline-*.tgz "$CHARTS"
