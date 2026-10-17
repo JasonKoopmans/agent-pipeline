@@ -1,0 +1,120 @@
+name: release
+
+# Push to main builds and pushes, in order: core -> stacks -> toolsets -> chart,
+# all tagged <images/VERSION>-<variant>. PRs build and scan without pushing.
+# Stacks and toolsets are devcontainers built with the devcontainer CLI on top
+# of the image built in the previous job.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ["images/**", "agent_tick/**", "prompts/**", "mcp/**", "chart/**", "pyproject.toml", ".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/agent-runner
+  PUSH: ${{ github.event_name != 'pull_request' }}
+  DEVCONTAINER_CLI: "@devcontainers/cli@0.80.1"
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        run: echo "version=$(cat images/VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - name: build for scan (amd64)
+        uses: docker/build-push-action@v6
+        with: {context: ., file: images/core/Dockerfile, platforms: linux/amd64, load: true, tags: "agent-runner:scan-core"}
+      - uses: aquasecurity/trivy-action@0.33.1
+        with: {image-ref: "agent-runner:scan-core", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1"}
+      - if: env.PUSH == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/core/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.v.outputs.version }}-core
+
+  stacks:
+    needs: core
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [dotnet10]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.PUSH == 'true'
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - name: build core locally (PRs have no pushed core)
+        if: env.PUSH != 'true'
+        uses: docker/build-push-action@v6
+        with: {context: ., file: images/core/Dockerfile, platforms: linux/amd64, load: true, tags: "agent-runner:pr-core"}
+      - name: devcontainer build
+        env:
+          AGENT_CORE_IMAGE: ${{ env.PUSH == 'true' && format('{0}:{1}-core', env.IMAGE, needs.core.outputs.version) || 'agent-runner:pr-core' }}
+          TAG: ${{ env.IMAGE }}:${{ needs.core.outputs.version }}-${{ matrix.stack }}
+        run: |
+          set -euo pipefail
+          if [ "$PUSH" = "true" ]; then
+            npx -y "$DEVCONTAINER_CLI" build --workspace-folder "images/stacks/${{ matrix.stack }}" \
+              --platform linux/amd64,linux/arm64 --push --image-name "$TAG"
+          else
+            npx -y "$DEVCONTAINER_CLI" build --workspace-folder "images/stacks/${{ matrix.stack }}" --image-name "agent-runner:scan-${{ matrix.stack }}"
+          fi
+      - if: env.PUSH != 'true'
+        uses: aquasecurity/trivy-action@0.33.1
+        with: {image-ref: "agent-runner:scan-${{ matrix.stack }}", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1"}
+
+  toolsets:
+    needs: [core, stacks]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolset: tester-dotnet10
+            stack: dotnet10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - name: devcontainer build
+        env:
+          AGENT_STACK_IMAGE: ${{ env.IMAGE }}:${{ needs.core.outputs.version }}-${{ matrix.stack }}
+        run: |
+          npx -y "$DEVCONTAINER_CLI" build --workspace-folder "images/toolsets/${{ matrix.toolset }}" \
+            --platform linux/amd64,linux/arm64 --push --image-name "$IMAGE:${{ needs.core.outputs.version }}-${{ matrix.toolset }}"
+
+  chart:
+    if: github.event_name != 'pull_request'
+    needs: [stacks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v4
+      - name: package and push
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm package chart/agent-pipeline -d /tmp/chart
+          helm push /tmp/chart/agent-pipeline-*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"

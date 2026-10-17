@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-pipeline
+description: One CronJob per agent role (planner, implementer, fixer, reviewers, merger) driving Claude Code against one GitHub repository
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

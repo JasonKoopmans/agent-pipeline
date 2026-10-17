@@ -1,0 +1,54 @@
+{{- $p := .Values.pipeline -}}
+{{- if not $p.repo }}{{ fail "pipeline.repo is required" }}{{ end -}}
+{{- if not $p.owner }}{{ fail "pipeline.owner is required" }}{{ end -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agent-pipeline.name" . }}-config
+  labels:
+    {{- include "agent-pipeline.labels" . | nindent 4 }}
+data:
+  pipeline.toml: |
+    repo = {{ $p.repo | quote }}
+    owner = {{ $p.owner | quote }}
+    base_branch = {{ $p.baseBranch | quote }}
+    review_cap = {{ int $p.reviewCap }}
+    daily_session_cap = {{ int $p.dailySessionCap }}
+    merge_mode = {{ $p.mergeMode | quote }}
+    plan_gate = {{ $p.planGate }}
+    stale_claim_minutes = {{ int $p.staleClaimMinutes }}
+    sandbox = {{ $p.sandbox }}
+    git_author_name = {{ $p.gitAuthorName | quote }}
+    git_author_email = {{ $p.gitAuthorEmail | quote }}
+    forbidden_paths = {{ $p.forbiddenPaths | toJson }}
+    gate_commands = {{ $p.gateCommands | toJson }}
+    {{- range $name, $r := .Values.roles }}
+    {{- if $r.enabled }}
+    {{- $role := include "agent-pipeline.role" (dict "root" $ "role" $r) | fromJson }}
+
+    [roles.{{ $name }}]
+    kind = {{ $role.kind | quote }}
+    engine = {{ default "claude" $role.engine | quote }}
+    model = {{ $role.model | quote }}
+    max_turns = {{ int $role.maxTurns }}
+    max_budget_usd = {{ float64 $role.maxBudgetUsd }}
+    timeout_minutes = {{ int $role.timeoutMinutes }}
+    required = {{ $role.required }}
+    {{- with $role.effort }}
+    effort = {{ . | quote }}
+    {{- end }}
+    {{- with $role.mcp }}
+    mcp = {{ . | quote }}
+    {{- end }}
+    {{- with $role.appSlug }}
+    app_slug = {{ . | quote }}
+    {{- end }}
+    {{- with $role.appUserId }}
+    app_user_id = {{ int . }}
+    {{- end }}
+    {{- with $role.prompt }}
+    prompt = {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    {{- end }}

@@ -1,0 +1,66 @@
+{{- if .Values.egress.enabled }}
+{{- $root := . }}
+{{- range $name, $r := .Values.roles }}
+{{- if $r.enabled }}
+{{- $role := include "agent-pipeline.role" (dict "root" $root "role" $r) | fromJson }}
+{{- $groups := $role.egress | default (index $root.Values.egress.byKind $role.kind) }}
+{{- $hosts := list }}
+{{- range $groups }}
+{{- $g := index $root.Values.egress.groups . }}
+{{- if not $g }}{{ fail (printf "role %s: unknown egress group %s" $name .) }}{{ end }}
+{{- $hosts = concat $hosts $g }}
+{{- end }}
+{{- $hosts = concat $hosts ($role.egressExtraFQDNs | default list) | uniq }}
+---
+# Egress allowlist for the {{ $name }} role's pods (policy is per pod, so every
+# stage of this role shares it). DNS goes through Cilium's proxy so toFQDNs can
+# resolve; everything else is denied.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ printf "%s-%s-egress" (include "agent-pipeline.name" $root) $name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "agent-pipeline.labels" $root | nindent 4 }}
+    agent-pipeline/role: {{ $name }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-pipeline
+      app.kubernetes.io/instance: {{ $root.Release.Name }}
+      agent-pipeline/role: {{ $name }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: ANY}
+          rules:
+            dns:
+              - matchPattern: "*"
+    {{- if $hosts }}
+    - toFQDNs:
+        {{- range $hosts }}
+        {{- if contains "*" . }}
+        - matchPattern: {{ . | quote }}
+        {{- else }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+    {{- end }}
+    {{- range ($role.egressServices | default list) }}
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .namespace }}
+            app.kubernetes.io/name: {{ .app }}
+      toPorts:
+        - ports:
+            - {port: {{ .port | quote }}, protocol: TCP}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

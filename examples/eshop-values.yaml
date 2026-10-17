@@ -1,0 +1,27 @@
+# HelmRelease values for the eShopOnWeb pilot (Phase 1: merge off, plan gate on).
+image:
+  version: "0.1.0"
+defaultStack: dotnet10
+suspend: true
+pipeline:
+  repo: JasonKoopmans/eShopOnWeb
+  owner: JasonKoopmans
+  baseBranch: ai-staging
+  mergeMode: "off"
+  planGate: true
+  gateCommands:
+    - ["dotnet", "test", "tests/UnitTests/UnitTests.csproj"]
+    - ["dotnet", "test", "tests/IntegrationTests/IntegrationTests.csproj"]
+    - ["dotnet", "test", "tests/FunctionalTests/FunctionalTests.csproj"]
+    - ["dotnet", "test", "tests/PublicApiIntegrationTests/PublicApiIntegrationTests.csproj"]
+# One GitHub App per role (scripts/provision_apps.py prints slug, user id and secret name).
+roles:
+  planner: {appSlug: jk-agent-planner, appSecret: agent-app-planner}
+  implementer: {appSlug: jk-agent-implementer, appSecret: agent-app-implementer}
+  fixer: {appSlug: jk-agent-fixer, appSecret: agent-app-fixer}
+  review-quality: {appSlug: jk-agent-review-quality, appSecret: agent-app-review-quality}
+secrets:
+  engines:
+    claude:
+      - {env: CLAUDE_CODE_OAUTH_TOKEN, name: agent-claude-oauth, key: CLAUDE_CODE_OAUTH_TOKEN}
+avoidNodes: [hiro-cmp-05]

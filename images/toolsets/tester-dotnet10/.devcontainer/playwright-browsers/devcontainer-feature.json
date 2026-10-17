@@ -1,0 +1,29 @@
+{
+  "id": "playwright-browsers",
+  "version": "1.0.0",
+  "name": "Playwright browsers",
+  "description": "Installs Playwright browsers and their OS dependencies into a shared, read-only path.",
+  "options": {
+    "version": {
+      "type": "string",
+      "default": "1.54.0",
+      "description": "Playwright version; must match the repo's Playwright package."
+    },
+    "browsers": {
+      "type": "string",
+      "default": "chromium",
+      "description": "Space-separated browsers to install."
+    },
+    "onlyShell": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install only the headless shell (what headless tests launch), not full Chromium."
+    }
+  },
+  "containerEnv": {
+    "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright"
+  },
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/node"
+  ]
+}

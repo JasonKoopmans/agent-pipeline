@@ -1,0 +1,9 @@
+# Build-time pins for the core image. mise only runs in the builder stage;
+# the runtime image gets the installed files, not mise. Renovate bumps these.
+[tools]
+python = "3.14.7"
+"aqua:cli/cli" = "2.102.0"
+# Node is only here so mise can fetch Claude Code; the runtime image keeps the
+# native binary from the package and no Node at all.
+node = "26.11.1"
+"npm:@anthropic-ai/claude-code" = { version = "2.1.296", allow_builds = ["@anthropic-ai/claude-code"] }

@@ -1,0 +1,169 @@
+# -- Everything here is the TRUSTED side of the pipeline: it lives in the
+# cluster's GitOps repo, never in the target repo, so an agent-written PR can
+# never change which roles run, the review cap, the merge mode or the gates.
+
+image:
+  repository: ghcr.io/jasonkoopmans/agent-runner
+  # Tags are <version>-<variant>: core, a stack (dotnet10, ...) or a toolset
+  # (tester-dotnet10, ...). See images/ in the agent-pipeline repo.
+  version: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Variant used by roles that build or test code unless a role sets `image`.
+# Planner, designer and merger default to `core`; prepare and publish always run `core`.
+defaultStack: dotnet10
+
+# Suspend every role (start suspended; trigger single runs with
+# `kubectl create job --from=cronjob/<name> <name>-manual-1`).
+suspend: true
+# Print intended GitHub writes instead of making them.
+dryRun: false
+
+pipeline:
+  repo: ""            # owner/name, e.g. JasonKoopmans/eShopOnWeb (required)
+  owner: ""           # GitHub login whose issues, labels and comments are instructions (required)
+  baseBranch: ai-staging
+  reviewCap: 3
+  dailySessionCap: 8
+  mergeMode: "off"    # off | staging (merges only into baseBranch)
+  planGate: true
+  staleClaimMinutes: 75
+  sandbox: true
+  gitAuthorName: agent-pipeline          # PAT mode only; App roles commit as their bot
+  gitAuthorEmail: agent-pipeline@users.noreply.github.com
+  # argv lists run by the secret-less verify stage after every code change.
+  gateCommands: []
+  forbiddenPaths: [".github/", "CLAUDE.md", ".claude/", ".agent/", ".mcp.json"]
+
+# Shared defaults for every role; each role below overrides what it needs.
+#   engine     harness that runs the model (agent_tick/engines)
+#   image      image variant for the agent and verify containers
+#   egress     egress groups (below) for this role's pods
+#   appSlug / appUserId / appSecret   the role's GitHub App identity
+#     (scripts/provision_apps.py prints these). Without appSecret the role
+#     falls back to the writer/commenter PAT secrets.
+roleDefaults:
+  engine: claude
+  model: sonnet
+  maxTurns: 40
+  maxBudgetUsd: 3
+  timeoutMinutes: 30
+  required: true
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+
+roles:
+  planner:
+    enabled: true
+    kind: planner
+    schedule: "5,35 * * * *"
+    maxTurns: 30
+    maxBudgetUsd: 2
+    timeoutMinutes: 20
+  designer:
+    enabled: false
+    kind: designer
+    schedule: "10,40 * * * *"
+    maxTurns: 30
+    maxBudgetUsd: 2
+    timeoutMinutes: 20
+  implementer:
+    enabled: true
+    kind: implementer
+    schedule: "15,45 * * * *"
+    maxTurns: 80
+    maxBudgetUsd: 6
+    timeoutMinutes: 40
+    resources:
+      requests: {cpu: "1", memory: 2Gi}
+      limits: {memory: 6Gi}
+  fixer:
+    enabled: true
+    kind: fixer
+    schedule: "20,50 * * * *"
+    maxTurns: 60
+    maxBudgetUsd: 4
+    timeoutMinutes: 40
+    resources:
+      requests: {cpu: "1", memory: 2Gi}
+      limits: {memory: 6Gi}
+  review-quality:
+    enabled: true
+    kind: reviewer
+    schedule: "25,55 * * * *"
+    maxTurns: 40
+    maxBudgetUsd: 3
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {memory: 4Gi}
+  review-security:
+    enabled: false
+    kind: reviewer
+    schedule: "28,58 * * * *"
+    maxTurns: 30
+    maxBudgetUsd: 2
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {memory: 4Gi}
+  review-e2e:
+    enabled: false
+    kind: reviewer
+    required: false            # advisory until the end-to-end suite is trusted
+    image: tester-dotnet10
+    schedule: "33 * * * *"
+    maxTurns: 40
+    maxBudgetUsd: 3
+    resources:
+      requests: {cpu: "1", memory: 2Gi}
+      limits: {memory: 6Gi}
+  merger:
+    enabled: false
+    kind: merger
+    schedule: "0,30 * * * *"
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 256Mi}
+
+secrets:
+  # Model credentials per engine; only the `agent` container of a role using
+  # that engine receives them, as the listed env vars.
+  engines:
+    claude:
+      - {env: CLAUDE_CODE_OAUTH_TOKEN, name: agent-claude-oauth, key: CLAUDE_CODE_OAUTH_TOKEN}
+  # PAT fallback for roles without an App (key GH_TOKEN). Leave name empty when
+  # every enabled role has appSecret.
+  githubWriter: {name: "", key: GH_TOKEN}      # implementer, fixer, merger
+  githubCommenter: {name: "", key: GH_TOKEN}   # planner, designer, reviewers
+
+job:
+  activeDeadlineSeconds: 3000
+  ttlSecondsAfterFinished: 86400
+  workspaceSizeLimit: 15Gi
+
+# Extra env for the publish container only (e.g. REVIEW_FORCE_REJECT: "1" in tests).
+publishEnv: {}
+
+# Avoid nodes by hostname (e.g. a node with slow cold image pulls).
+avoidNodes: []
+
+egress:
+  enabled: true
+  # Named host groups; wildcards follow Cilium matchPattern rules.
+  groups:
+    # Every pod needs it: prepare and publish talk to GitHub. The agent
+    # container in the same pod holds no GitHub credential, and anonymous
+    # GitHub cannot write.
+    github: [github.com, api.github.com, codeload.github.com, objects.githubusercontent.com]
+    anthropic: [api.anthropic.com, claude.ai, platform.claude.com, console.anthropic.com]
+    nuget: [api.nuget.org, "*.nuget.org"]
+  # Groups per role kind; a role's `egress` list replaces its kind's default.
+  byKind:
+    planner: [github, anthropic]
+    designer: [github, anthropic]
+    implementer: [github, anthropic, nuget]
+    fixer: [github, anthropic, nuget]
+    reviewer: [github, anthropic, nuget]
+    merger: [github]
+  # Per role, in role values: egressExtraFQDNs: [...], egressServices:
+  #   [{namespace: mcp, app: playwright-mcp, port: "3000"}]

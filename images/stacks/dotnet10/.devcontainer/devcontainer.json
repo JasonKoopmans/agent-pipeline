@@ -1,0 +1,24 @@
+{
+  // Stack image = core + this toolchain, built with the devcontainer CLI:
+  //   devcontainer build --workspace-folder images/stacks/dotnet10 --image-name agent-runner:dev-dotnet10
+  // The same file opens as the human dev environment, so people and agents use
+  // the same toolchain. CI sets AGENT_CORE_IMAGE to the core tag being built.
+  "name": "agent-runner · dotnet10",
+  "image": "${localEnv:AGENT_CORE_IMAGE:ghcr.io/jasonkoopmans/agent-runner:0.1.0-core}",
+  "features": {
+    // Official feature; Renovate bumps the tag. The target repo's global.json
+    // (rollForward) picks among installed SDKs.
+    "ghcr.io/devcontainers/features/dotnet:2": { "version": "10.0", "installUsingApt": false }
+  },
+  // Used by humans opening the devcontainer; pods get the same values from the chart.
+  "containerEnv": {
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1"
+  },
+  "remoteUser": "agent",
+  "overrideCommand": true,
+  "mounts": ["source=agent-runner-claude,target=/home/agent/.claude,type=volume"],
+  "customizations": {
+    "vscode": { "extensions": ["anthropic.claude-code", "ms-dotnettools.csdevkit"] }
+  }
+}

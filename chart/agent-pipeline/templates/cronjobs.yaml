@@ -1,0 +1,192 @@
+{{- /*
+One CronJob per enabled role. Each pod runs the four stages in order:
+  init prepare (GitHub identity, core image)
+  init agent   (model credential, role image)
+  init verify  (no secrets, role image)
+  publish      (GitHub identity, core image)
+Kubernetes injects env and Secret volumes per container, so the containers that
+run the model or model-written code never hold a GitHub credential, and the
+containers that hold one never carry a compiler or browser. Volumes:
+  control     task.json: written by prepare, read-only for everyone after
+  work        clone + agent output: writable by the agent, untrusted
+  verify      verify.json: written by verify, never mounted in the agent container
+  github-app  the role's App private key: prepare and publish only
+*/ -}}
+{{- $root := . -}}
+{{- $core := include "agent-pipeline.image" (dict "root" $root "variant" "core") -}}
+{{- range $name, $r := .Values.roles }}
+{{- if $r.enabled }}
+{{- $role := include "agent-pipeline.role" (dict "root" $root "role" $r) | fromJson }}
+{{- $roleImage := include "agent-pipeline.image" (dict "root" $root "variant" (include "agent-pipeline.roleVariant" (dict "root" $root "role" $role))) }}
+{{- $pat := include "agent-pipeline.githubSecret" (dict "kind" $role.kind "root" $root) | fromJson }}
+{{- if and (not $role.appSecret) (not $pat.name) }}{{ fail (printf "role %s needs appSecret (GitHub App) or a PAT secret (secrets.githubWriter / githubCommenter)" $name) }}{{ end }}
+{{- $full := printf "%s-%s" (include "agent-pipeline.name" $root) $name | trunc 52 | trimSuffix "-" }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "agent-pipeline.labels" $root | nindent 4 }}
+    agent-pipeline/role: {{ $name }}
+    agent-pipeline/kind: {{ $role.kind }}
+spec:
+  schedule: {{ $role.schedule | quote }}
+  suspend: {{ or $root.Values.suspend (default false $role.suspend) }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "agent-pipeline.labels" $root | nindent 8 }}
+        agent-pipeline/role: {{ $name }}
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ int $root.Values.job.activeDeadlineSeconds }}
+      # The stock KubeJobFailed rule latches until the Job object is deleted.
+      ttlSecondsAfterFinished: {{ int $root.Values.job.ttlSecondsAfterFinished }}
+      template:
+        metadata:
+          labels:
+            {{- include "agent-pipeline.labels" $root | nindent 12 }}
+            agent-pipeline/role: {{ $name }}
+            agent-pipeline/kind: {{ $role.kind }}
+          annotations:
+            checksum/config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: {type: RuntimeDefault}
+          {{- with $root.Values.avoidNodes }}
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: kubernetes.io/hostname
+                        operator: NotIn
+                        values: {{ toJson . }}
+          {{- end }}
+          initContainers:
+            - name: prepare
+              image: {{ $core | quote }}
+              imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+              args: ["prepare", "--role", {{ $name | quote }}]
+              env:
+                {{- include "agent-pipeline.githubEnv" (dict "role" $role "pat" $pat) | nindent 16 }}
+                - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+                - {name: AGENT_CONTROL_DIR, value: /control}
+                - {name: AGENT_VERIFY_DIR, value: /verify}
+                {{- if $root.Values.dryRun }}
+                - {name: AGENT_DRY_RUN, value: "1"}
+                {{- end }}
+              resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              volumeMounts:
+                - {name: control, mountPath: /control}
+                - {name: work, mountPath: /work}
+                - {name: verify, mountPath: /verify}
+                - {name: config, mountPath: /etc/agent, readOnly: true}
+                - {name: ops-home, mountPath: /home/agent}
+                - {name: tmp, mountPath: /tmp}
+                {{- if $role.appSecret }}
+                - {name: github-app, mountPath: /run/github-app, readOnly: true}
+                {{- end }}
+            - name: agent
+              image: {{ $roleImage | quote }}
+              imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+              args: ["agent", "--role", {{ $name | quote }}]
+              env:
+                {{- if ne $role.kind "merger" }}
+                {{- $creds := index $root.Values.secrets.engines (default "claude" $role.engine) }}
+                {{- if not $creds }}{{ fail (printf "role %s: no secrets.engines entry for engine %s" $name $role.engine) }}{{ end }}
+                {{- range $creds }}
+                - {name: {{ .env }}, valueFrom: {secretKeyRef: {name: {{ .name }}, key: {{ .key }}}}}
+                {{- end }}
+                {{- end }}
+                - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+                - {name: AGENT_CONTROL_DIR, value: /control}
+                - {name: NUGET_PACKAGES, value: /work/.nuget}
+              resources: {{ toJson $role.resources }}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              volumeMounts:
+                - {name: control, mountPath: /control, readOnly: true}
+                - {name: work, mountPath: /work}
+                - {name: config, mountPath: /etc/agent, readOnly: true}
+                - {name: agent-home, mountPath: /home/agent}
+                - {name: tmp, mountPath: /tmp}
+            - name: verify
+              image: {{ $roleImage | quote }}
+              imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+              args: ["verify", "--role", {{ $name | quote }}]
+              env:
+                - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+                - {name: AGENT_CONTROL_DIR, value: /control}
+                - {name: AGENT_VERIFY_DIR, value: /verify}
+                - {name: NUGET_PACKAGES, value: /work/.nuget}
+              resources: {{ toJson $role.resources }}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              volumeMounts:
+                - {name: control, mountPath: /control, readOnly: true}
+                - {name: work, mountPath: /work}
+                - {name: verify, mountPath: /verify}
+                - {name: config, mountPath: /etc/agent, readOnly: true}
+                - {name: verify-home, mountPath: /home/agent}
+                - {name: tmp, mountPath: /tmp}
+          containers:
+            - name: publish
+              image: {{ $core | quote }}
+              imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+              args: ["publish", "--role", {{ $name | quote }}]
+              env:
+                {{- include "agent-pipeline.githubEnv" (dict "role" $role "pat" $pat) | nindent 16 }}
+                - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+                - {name: AGENT_CONTROL_DIR, value: /control}
+                - {name: AGENT_VERIFY_DIR, value: /verify}
+                {{- if $root.Values.dryRun }}
+                - {name: AGENT_DRY_RUN, value: "1"}
+                {{- end }}
+                {{- range $k, $v := $root.Values.publishEnv }}
+                - {name: {{ $k }}, value: {{ $v | quote }}}
+                {{- end }}
+              resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+              volumeMounts:
+                - {name: control, mountPath: /control, readOnly: true}
+                # The workspace is read, never executed: publish copies the branch
+                # into a fresh repo (its own config, no hooks) before pushing.
+                - {name: work, mountPath: /work, readOnly: true}
+                - {name: verify, mountPath: /verify, readOnly: true}
+                - {name: config, mountPath: /etc/agent, readOnly: true}
+                - {name: ops-home, mountPath: /home/agent}
+                - {name: tmp, mountPath: /tmp}
+                {{- if $role.appSecret }}
+                - {name: github-app, mountPath: /run/github-app, readOnly: true}
+                {{- end }}
+          volumes:
+            - {name: config, configMap: {name: {{ include "agent-pipeline.name" $root }}-config}}
+            - {name: control, emptyDir: {sizeLimit: 16Mi}}
+            - {name: verify, emptyDir: {sizeLimit: 16Mi}}
+            - {name: work, emptyDir: {sizeLimit: {{ $root.Values.job.workspaceSizeLimit }}}}
+            - {name: agent-home, emptyDir: {sizeLimit: 2Gi}}
+            - {name: verify-home, emptyDir: {sizeLimit: 2Gi}}
+            - {name: ops-home, emptyDir: {sizeLimit: 256Mi}}
+            - {name: tmp, emptyDir: {sizeLimit: 4Gi}}
+            {{- if $role.appSecret }}
+            - name: github-app
+              secret:
+                secretName: {{ $role.appSecret }}
+                defaultMode: 0440
+                items:
+                  - {key: private-key, path: private-key}
+            {{- end }}
+{{- end }}
+{{- end }}

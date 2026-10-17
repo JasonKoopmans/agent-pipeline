@@ -1,0 +1,22 @@
+[project]
+name = "agent-tick"
+version = "0.1.0"
+description = "Deterministic wrapper that drives Claude Code through an issue -> plan -> PR -> review -> merge pipeline on GitHub"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+agent-tick = "agent_tick.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["agent_tick", "agent_tick.engines"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

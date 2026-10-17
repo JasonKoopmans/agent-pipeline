@@ -1,0 +1,15 @@
+{
+  // Toolset image = a stack + extras only one role needs. This one adds headless
+  // browsers for an end-to-end test reviewer; no other role carries them.
+  //   devcontainer build --workspace-folder images/toolsets/tester-dotnet10 --image-name agent-runner:dev-tester-dotnet10
+  "name": "agent-runner · tester-dotnet10",
+  "image": "${localEnv:AGENT_STACK_IMAGE:ghcr.io/jasonkoopmans/agent-runner:0.1.0-dotnet10}",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    // Local feature: browsers matching the target repo's Microsoft.Playwright
+    // version (eShopOnWeb pins 1.54.0 in Directory.Packages.props).
+    "./playwright-browsers": { "version": "1.54.0", "browsers": "chromium" }
+  },
+  "remoteUser": "agent",
+  "overrideCommand": true
+}

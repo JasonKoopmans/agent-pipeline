@@ -1,0 +1,35 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - uses: azure/setup-helm@v4
+      - run: pip install pytest pyyaml
+      - run: python -m pytest -q   # includes chart render tests (needs helm)
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v4
+      - name: lint and render
+        run: |
+          set -euo pipefail
+          args=(--set pipeline.repo=example/app --set pipeline.owner=example
+                --set secrets.githubWriter.name=w --set secrets.githubCommenter.name=c)
+          helm lint chart/agent-pipeline "${args[@]}"
+          helm template t chart/agent-pipeline "${args[@]}" > /tmp/render.yaml
+          grep -q 'kind: CronJob' /tmp/render.yaml

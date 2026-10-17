@@ -1,0 +1,35 @@
+# Local/dev pipeline config (in the cluster the chart renders this from values).
+repo = "JasonKoopmans/eShopOnWeb"
+owner = "JasonKoopmans"
+base_branch = "ai-staging"
+review_cap = 3
+daily_session_cap = 8
+merge_mode = "off"
+plan_gate = true
+gate_commands = [
+  ["dotnet", "test", "tests/UnitTests/UnitTests.csproj"],
+  ["dotnet", "test", "tests/IntegrationTests/IntegrationTests.csproj"],
+  ["dotnet", "test", "tests/FunctionalTests/FunctionalTests.csproj"],
+  ["dotnet", "test", "tests/PublicApiIntegrationTests/PublicApiIntegrationTests.csproj"],
+]
+
+[roles.planner]
+kind = "planner"
+max_turns = 30
+max_budget_usd = 2.0
+
+[roles.implementer]
+kind = "implementer"
+max_turns = 80
+max_budget_usd = 6.0
+timeout_minutes = 40
+
+[roles.fixer]
+kind = "fixer"
+max_turns = 60
+max_budget_usd = 4.0
+timeout_minutes = 40
+
+[roles.review-quality]
+kind = "reviewer"
+max_turns = 40
