@@ -12,7 +12,7 @@ REPO = "owner/app"
 
 class FakeGitHub(GitHub):
     def __init__(self, repo: str = REPO, now: datetime | None = None):
-        super().__init__(repo, runner=self._no_subprocess)
+        super().__init__(repo, opener=self._no_network)
         self.now = now or datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
         self.issues: dict[int, dict] = {}
         self.pulls: dict[int, dict] = {}
@@ -25,8 +25,8 @@ class FakeGitHub(GitHub):
         self._numbers = itertools.count(100)
 
     @staticmethod
-    def _no_subprocess(*a, **k):
-        raise AssertionError("fake must not run gh")
+    def _no_network(*a, **k):
+        raise AssertionError("fake must not touch the network")
 
     # ------------------------------------------------------------ fixtures
 

@@ -37,8 +37,8 @@ def test_required_reviewers(cfg):
 
 
 def test_repo_guard_blocks_upstream_and_other_repos():
-    gh = GitHub(REPO, runner=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
-    for path in ("repos/NimblePros/eShopOnWeb/pulls", "repos/owner/app-other/issues", "user", f"repos/{REPO}/../x"):
+    gh = GitHub(REPO, opener=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
+    for path in ("repos/NimblePros/eShopOnWeb/pulls", "repos/owner/app-other/issues", "user", f"repos/{REPO}/../x", f"repos/{REPO}?x=1"):
         with pytest.raises(RepoGuardError):
             gh.get(path)
         with pytest.raises(RepoGuardError):
@@ -46,7 +46,7 @@ def test_repo_guard_blocks_upstream_and_other_repos():
 
 
 def test_dry_run_records_without_calling():
-    gh = GitHub(REPO, dry_run=True, runner=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+    gh = GitHub(REPO, dry_run=True, opener=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
     gh.comment(1, "x")
     assert gh.writes[0]["path"] == f"repos/{REPO}/issues/1/comments"
 
@@ -362,3 +362,41 @@ def test_agent_env_drops_github_tokens(monkeypatch):
     assert "GH_TOKEN" not in env and "GITHUB_TOKEN" not in env and "SOME_SECRET" not in env
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "c"
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in stages.agent_env(())
+
+
+class _Resp:
+    def __init__(self, body, link=""):
+        self._body, self.headers = json.dumps(body).encode(), {"Link": link}
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_http_client_paginates_and_authenticates():
+    seen = []
+    pages = {
+        f"https://api.github.com/repos/{REPO}/issues?state=open": _Resp([{"n": 1}], f'<https://api.github.com/repos/{REPO}/issues?state=open&page=2>; rel="next"'),
+        f"https://api.github.com/repos/{REPO}/issues?state=open&page=2": _Resp([{"n": 2}]),
+    }
+
+    def opener(req, timeout):
+        seen.append((req.full_url, req.get_header("Authorization")))
+        return pages[req.full_url]
+
+    gh = GitHub(REPO, token="t0k", opener=opener)
+    assert gh.get(gh.r("issues"), {"state": "open"}, paginate=True) == [{"n": 1}, {"n": 2}]
+    assert all(auth == "Bearer t0k" for _, auth in seen) and len(seen) == 2
+
+
+def test_pagination_cannot_escape_the_repo():
+    def opener(req, timeout):
+        return _Resp([{"n": 1}], '<https://api.github.com/repos/NimblePros/eShopOnWeb/issues?page=2>; rel="next"')
+
+    with pytest.raises(RepoGuardError):
+        GitHub(REPO, token="t", opener=opener).get(f"repos/{REPO}/issues", paginate=True)

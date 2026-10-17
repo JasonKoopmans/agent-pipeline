@@ -1,18 +1,23 @@
-"""Repo-locked GitHub client.
+"""Repo-locked GitHub client (REST over the standard library; no gh binary).
 
-Every call goes through `gh api` with an explicit `repos/<repo>/...` path. No
-command ever relies on gh's repository resolution from git remotes, which in a
-fork checkout can point at the upstream parent. A path outside the configured
-repo raises before any network call, reads included.
+Every call uses an explicit `repos/<repo>/...` path. Nothing ever relies on a
+CLI's repository resolution from git remotes, which in a fork checkout can
+point at the upstream parent. A path outside the configured repo raises before
+any network call, reads included.
 """
 
 import json
-import os
-import subprocess
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Callable
 from typing import Any
 
 from agent_tick import log
+
+API = "https://api.github.com"
+_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
 class GitHubError(RuntimeError):
@@ -25,56 +30,63 @@ class RepoGuardError(GitHubError):
     pass
 
 
-Runner = Callable[..., subprocess.CompletedProcess]
+Opener = Callable[..., Any]
 
 
 class GitHub:
-    def __init__(self, repo: str, *, dry_run: bool = False, runner: Runner = subprocess.run, token: str | None = None):
+    def __init__(self, repo: str, *, dry_run: bool = False, token: str | None = None, opener: Opener = urllib.request.urlopen):
         self.repo = repo
         self._token = token
         self.dry_run = dry_run
-        self._run = runner
+        self._open = opener
         self.writes: list[dict[str, Any]] = []
 
     def _check(self, path: str) -> None:
         base = f"repos/{self.repo}"
         if path != base and not path.startswith(base + "/"):
             raise RepoGuardError(f"refusing GitHub path outside {self.repo}: {path}")
-        if ".." in path.split("/"):
-            raise RepoGuardError(f"refusing path traversal: {path}")
+        if ".." in path.split("/") or "?" in path or "#" in path:
+            raise RepoGuardError(f"refusing unsafe path: {path}")
 
-    def _gh(self, args: list[str], body: dict | None = None) -> Any:
-        proc = self._run(
-            ["gh", "api", *args],
-            input=json.dumps(body) if body is not None else None,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=os.environ | {"GH_TOKEN": self._token} if self._token else None,
-        )
-        if proc.returncode != 0:
-            status = None
+    def _request(self, method: str, url: str, body: dict | None = None) -> tuple[Any, str]:
+        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "agent-tick"}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with self._open(req, timeout=30) as resp:
+                raw = resp.read()
+                link = resp.headers.get("Link", "") if resp.headers else ""
+        except urllib.error.HTTPError as exc:
+            detail = ""
             try:
-                status = int(json.loads(proc.stdout or "{}").get("status"))
-            except (ValueError, TypeError, AttributeError):
+                detail = json.loads(exc.read() or b"{}").get("message", "")
+            except (ValueError, AttributeError):
                 pass
-            raise GitHubError(f"gh api {' '.join(args[:3])} failed: {proc.stderr.strip()[:500]}", status)
-        out = proc.stdout.strip()
-        return json.loads(out) if out else None
+            raise GitHubError(f"GitHub {method} {url.removeprefix(API)} failed: HTTP {exc.code} {detail}"[:500], exc.code) from None
+        except urllib.error.URLError as exc:
+            raise GitHubError(f"GitHub {method} {url.removeprefix(API)} failed: {exc.reason}") from None
+        return (json.loads(raw) if raw else None), link
 
     def get(self, path: str, params: dict[str, str] | None = None, *, paginate: bool = False) -> Any:
         self._check(path)
-        args = ["-X", "GET", path, "-H", "Accept: application/vnd.github+json"]
-        for key, value in (params or {}).items():
-            args += ["-f", f"{key}={value}"]
-        if paginate:
-            args += ["--paginate", "--slurp"]
-            pages = self._gh(args) or []
-            items: list[Any] = []
-            for page in pages:
-                items.extend(page if isinstance(page, list) else [page])
-            return items
-        return self._gh(args)
+        url = f"{API}/{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
+        if not paginate:
+            return self._request("GET", url)[0]
+        items: list[Any] = []
+        prefix = f"{API}/{path}"
+        while url:
+            page, link = self._request("GET", url)
+            items.extend(page if isinstance(page, list) else [page])
+            match = _NEXT_RE.search(link)
+            url = match.group(1) if match else ""
+            if url and not url.startswith(prefix):
+                raise RepoGuardError(f"pagination left {path}: {url}")
+        return items
 
     def write(self, method: str, path: str, body: dict | None = None) -> Any:
         self._check(path)
@@ -85,7 +97,7 @@ class GitHub:
         if self.dry_run:
             log.event("dry_run_write", **record)
             return {"id": -len(self.writes), "dry_run": True}
-        return self._gh(["-X", method, path, "--input", "-"], body or {})
+        return self._request(method, f"{API}/{path}", body if method != "DELETE" else None)[0]
 
     # Convenience wrappers; all stay inside self.repo.
     def r(self, suffix: str = "") -> str:

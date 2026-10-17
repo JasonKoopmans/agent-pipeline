@@ -35,7 +35,7 @@ Three layers, each built on the previous one, all tagged `<version>-<variant>`:
 
 | Layer | Built from | Contents | Used by |
 |---|---|---|---|
-| `core` (~580 MB) | `images/core/Dockerfile` (two-stage; mise only in the builder) | Python 3.14, git, gh, Claude Code native binary, openssl, bubblewrap, `agent-tick` | prepare/publish always; planner, designer, merger |
+| `core` (~545 MB) | `images/core/Dockerfile` (two-stage; mise only in the builder) | Python 3.14, git, Claude Code native binary, openssl, bubblewrap, `agent-tick` | prepare/publish always; planner, designer, merger |
 | stack, e.g. `dotnet10` (~1.3 GB) | `images/stacks/<name>/.devcontainer/` via the devcontainer CLI | core + toolchain via devcontainer features | implementer, fixer, reviewers |
 | toolset, e.g. `tester-dotnet10` (~2.5 GB) | `images/toolsets/<name>/.devcontainer/` | stack + role-only tools (Playwright browsers) | only the role that needs them (`review-e2e`) |
 

@@ -2,7 +2,6 @@
 # the runtime image gets the installed files, not mise. Renovate bumps these.
 [tools]
 python = "3.14.7"
-"aqua:cli/cli" = "2.102.0"
 # Node is only here so mise can fetch Claude Code; the runtime image keeps the
 # native binary from the package and no Node at all.
 node = "26.11.1"
