@@ -280,7 +280,12 @@ def run_agent(cfg: Pipeline, role: Role, ws: Workspace, engine: engines.Engine |
         result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
     result.setdefault("status", "error")
     ws.write("session.json", result)
-    log.event("session_end", **{k: result.get(k) for k in ("status", "num_turns", "total_cost_usd", "duration_ms", "subtype", "error")})
+    fields = {k: result.get(k) for k in ("status", "num_turns", "total_cost_usd", "duration_ms", "subtype", "error")}
+    if result.get("status") != "ok":
+        # The harness's own message (e.g. "401 OAuth access token is invalid");
+        # without it a failed session only says status=error.
+        fields["detail"] = str(result.get("result") or result.get("stderr_tail") or "")[:500]
+    log.event("session_end", **fields)
     return result
 
 
