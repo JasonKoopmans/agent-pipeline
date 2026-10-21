@@ -328,17 +328,25 @@ def _verify_code(cfg: Pipeline, role: Role, task: dict, ws: Workspace) -> dict:
     current = gitops.git("rev-parse", "--abbrev-ref", "HEAD", cwd=ws.repo)
     if current != branch:
         gitops.git("checkout", "-q", branch, cwd=ws.repo)
-    message = str(out.get("commit_message") or "").strip().splitlines()[0][:200] if str(out.get("commit_message") or "").strip() else ""
-    message = message or f"agent: {task['kind']} for #{task['issue']['number']}"
-    message += f"\n\nIssue: #{task['issue']['number']}\nRun-Id: {task['run_id']}"
     name, email = cfg.git_identity(role)
-    gitops.commit_all(ws.repo, message, name, email)
+    gitops.commit_all(ws.repo, "agent: uncommitted changes", name, email)
     tip = gitops.head(ws.repo)
     if tip == task["start_sha"]:
         return {"ok": False, "reason": "no changes were made"}
     ancestor = subprocess.run(["git", *gitops.NO_HOOKS, "merge-base", "--is-ancestor", task["start_sha"], tip], cwd=ws.repo, check=False)
     if ancestor.returncode != 0:
         return {"ok": False, "reason": "history rewritten: start commit is not an ancestor of the result"}
+    # One commit per run, as the role's bot, with trailers. The subject comes
+    # from the structured output, else the model's first commit subject.
+    subjects = [s for s in gitops.git("log", "--reverse", "--format=%s", f"{task['start_sha']}..{tip}", cwd=ws.repo).splitlines() if s and s != "agent: uncommitted changes"]
+    subject = str(out.get("commit_message") or "").strip().splitlines()[0][:200] if str(out.get("commit_message") or "").strip() else ""
+    subject = subject or (subjects[0][:200] if subjects else f"agent: {task['kind']} for #{task['issue']['number']}")
+    body = "\n".join(f"- {s}" for s in subjects) + "\n\n" if len(subjects) > 1 else ""
+    message = f"{subject}\n\n{body}Issue: #{task['issue']['number']}\nRun-Id: {task['run_id']}"
+    if diff := gitops.git("diff", "--name-only", f"{task['start_sha']}..{tip}", cwd=ws.repo):
+        tip = gitops.squash_since(ws.repo, task["start_sha"], message, name, email)
+    else:
+        return {"ok": False, "reason": "no changes were made"}
     changed = [l for l in gitops.git("diff", "--name-only", f"{task['start_sha']}..{tip}", cwd=ws.repo).splitlines() if l]
     forbidden = [f for f in changed if any(f == p.rstrip("/") or f.startswith(p) for p in cfg.forbidden_paths)]
     if forbidden:

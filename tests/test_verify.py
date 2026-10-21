@@ -129,3 +129,32 @@ def test_control_and_verify_files_live_outside_the_agent_workspace(tmp_path):
     assert (tmp_path / "verify" / "verify.json").exists()
     assert (tmp_path / "work" / "session.json").exists()
     assert not (tmp_path / "work" / "task.json").exists()
+
+
+def test_model_commits_are_squashed_into_one_bot_commit(ws):
+    for n, name in ((2, "mine"), (3, "again")):
+        (ws.repo / "app.txt").write_text(f"v{n}\n")
+        _git(ws.repo, "-c", "user.name=agent", "-c", "user.email=agent@example.com", "commit", "-qam", f"feat: step {name}")
+    ws.write("session.json", {"status": "ok", "structured_output": {"outcome": "done", "commit_message": "test: cover thing"}})
+    cfg = config.parse({"repo": REPO, "owner": OWNER, "base_branch": "ai-staging",
+                        "roles": {"implementer": {"kind": "implementer", "app_slug": "jk-agent-implementer", "app_user_id": 42}}})
+    result = stages.verify(cfg, cfg.role("implementer"), ws)
+    assert result["ok"], result
+    task = ws.task
+    assert gitops.git("rev-list", "--count", f"{task['start_sha']}..HEAD", cwd=ws.repo) == "1"
+    who = "jk-agent-implementer[bot] <42+jk-agent-implementer[bot]@users.noreply.github.com>"
+    assert gitops.git("log", "-1", "--format=%an <%ae>", cwd=ws.repo) == who
+    assert gitops.git("log", "-1", "--format=%cn <%ce>", cwd=ws.repo) == who
+    msg = gitops.git("log", "-1", "--format=%B", cwd=ws.repo)
+    assert msg.startswith("test: cover thing") and "- feat: step mine" in msg and "Run-Id: r" in msg
+    assert result["head_sha"] == gitops.head(ws.repo)
+    assert (ws.repo / "app.txt").read_text() == "v3\n"
+
+
+def test_revert_to_start_counts_as_no_change(ws):
+    (ws.repo / "app.txt").write_text("v2\n")
+    _git(ws.repo, "commit", "-qam", "x")
+    (ws.repo / "app.txt").write_text("v1\n")
+    _git(ws.repo, "commit", "-qam", "undo")
+    cfg = _cfg()
+    assert stages.verify(cfg, cfg.role("implementer"), ws)["reason"] == "no changes were made"

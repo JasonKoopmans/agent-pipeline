@@ -75,7 +75,9 @@ class Pipeline:
     merge_mode: str = "off"
     plan_gate: bool = True
     stale_claim_minutes: int = 75
-    sandbox: bool = True
+    # Claude Code's bubblewrap sandbox needs unprivileged user namespaces, which
+    # Talos blocks; when it cannot start, the model just runs commands outside it.
+    sandbox: bool = False
     forbidden_paths: tuple[str, ...] = (".github/", "CLAUDE.md", ".claude/", ".agent/", ".mcp.json")
     gate_commands: tuple[tuple[str, ...], ...] = ()
     git_author_name: str = "agent-pipeline"

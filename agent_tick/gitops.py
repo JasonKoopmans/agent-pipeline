@@ -66,6 +66,21 @@ def changed_files(repo_dir: Path, base: str, tip: str = "HEAD") -> list[str]:
     return [l for l in out.splitlines() if l]
 
 
+def squash_since(repo_dir: Path, base: str, message: str, name: str, email: str) -> str:
+    """Replace every commit after `base` with one commit authored and committed by
+    the given identity. The tree is unchanged; returns the new HEAD.
+
+    The model commits however it likes (any identity, any number of commits);
+    what gets published is always one commit per run, attributable to the
+    role's bot, carrying the run's trailers.
+    """
+    git("reset", "--soft", base, cwd=repo_dir)
+    env = ["-c", f"user.name={name}", "-c", f"user.email={email}"]
+    git(*env, "commit", "--no-verify", "-q", "--allow-empty-message", "-m", message,
+        "--author", f"{name} <{email}>", cwd=repo_dir)
+    return head(repo_dir)
+
+
 def commit_all(repo_dir: Path, message: str, name: str, email: str) -> bool:
     """Commit anything the agent left uncommitted. Returns True if a commit was made."""
     git("add", "-A", cwd=repo_dir)

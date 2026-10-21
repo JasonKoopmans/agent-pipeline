@@ -6,7 +6,7 @@ image:
   repository: ghcr.io/jasonkoopmans/agent-runner
   # Tags are <version>-<variant>: core, a stack (dotnet10, ...) or a toolset
   # (tester-dotnet10, ...). See images/ in the agent-pipeline repo.
-  version: "0.1.2"
+  version: "0.1.3"
   pullPolicy: IfNotPresent
 
 # Variant used by roles that build or test code unless a role sets `image`.
@@ -28,7 +28,11 @@ pipeline:
   mergeMode: "off"    # off | staging (merges only into baseBranch)
   planGate: true
   staleClaimMinutes: 75
-  sandbox: true
+  # Claude Code's own command sandbox (bubblewrap). Off: it needs unprivileged
+  # user namespaces, which Talos blocks, and when it cannot start the model
+  # runs commands unsandboxed anyway. The pod is the boundary: no GitHub
+  # credential in the agent container, per-role egress, read-only task file.
+  sandbox: false
   gitAuthorName: agent-pipeline          # PAT mode only; App roles commit as their bot
   gitAuthorEmail: agent-pipeline@users.noreply.github.com
   # argv lists run by the secret-less verify stage after every code change.
