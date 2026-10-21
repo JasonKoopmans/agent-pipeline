@@ -6,7 +6,7 @@ image:
   repository: ghcr.io/jasonkoopmans/agent-runner
   # Tags are <version>-<variant>: core, a stack (dotnet10, ...) or a toolset
   # (tester-dotnet10, ...). See images/ in the agent-pipeline repo.
-  version: "0.1.1"
+  version: "0.1.2"
   pullPolicy: IfNotPresent
 
 # Variant used by roles that build or test code unless a role sets `image`.
@@ -140,6 +140,11 @@ job:
   activeDeadlineSeconds: 3000
   ttlSecondsAfterFinished: 86400
   workspaceSizeLimit: 15Gi
+
+# Non-secret build settings for the agent and verify containers, passed through
+# to the harness and the test gate (e.g. LibraryRestore: "false" to skip a
+# repo's build-time CDN download that egress blocks). Never put secrets here.
+buildEnv: {}
 
 # Extra env for the publish container only (e.g. REVIEW_FORCE_REJECT: "1" in tests).
 publishEnv: {}

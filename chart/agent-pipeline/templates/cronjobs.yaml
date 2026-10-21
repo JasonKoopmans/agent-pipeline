@@ -122,6 +122,12 @@ spec:
                 - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
                 - {name: AGENT_CONTROL_DIR, value: /control}
                 - {name: NUGET_PACKAGES, value: /work/.nuget}
+                {{- with $root.Values.buildEnv }}
+                {{- range $k, $v := . }}
+                - {name: {{ $k }}, value: {{ $v | quote }}}
+                {{- end }}
+                - {name: AGENT_PASS_ENV, value: {{ keys . | sortAlpha | join "," | quote }}}
+                {{- end }}
               resources: {{ toJson $role.resources }}
               securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
               volumeMounts:
@@ -139,6 +145,12 @@ spec:
                 - {name: AGENT_CONTROL_DIR, value: /control}
                 - {name: AGENT_VERIFY_DIR, value: /verify}
                 - {name: NUGET_PACKAGES, value: /work/.nuget}
+                {{- with $root.Values.buildEnv }}
+                {{- range $k, $v := . }}
+                - {name: {{ $k }}, value: {{ $v | quote }}}
+                {{- end }}
+                - {name: AGENT_PASS_ENV, value: {{ keys . | sortAlpha | join "," | quote }}}
+                {{- end }}
               resources: {{ toJson $role.resources }}
               securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
               volumeMounts:

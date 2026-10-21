@@ -233,7 +233,14 @@ def build_prompt(cfg: Pipeline, role: Role, task: dict) -> str:
 
 def agent_env(secret_env: tuple[str, ...] = ()) -> dict[str, str]:
     """Minimal environment for the harness: safe basics plus its own credential only."""
-    env = {k: v for k, v in os.environ.items() if k in SAFE_ENV or (k.startswith(SAFE_ENV_PREFIXES) and "TOKEN" not in k and "KEY" not in k and "SECRET" not in k)}
+    # AGENT_PASS_ENV: extra non-secret build settings the chart sets per repo
+    # (buildEnv, e.g. LibraryRestore=false), comma-separated names.
+    passed = {n.strip() for n in os.environ.get("AGENT_PASS_ENV", "").split(",") if n.strip()}
+    env = {
+        k: v for k, v in os.environ.items()
+        if (k in SAFE_ENV or k in passed or k.startswith(SAFE_ENV_PREFIXES))
+        and "TOKEN" not in k and "KEY" not in k and "SECRET" not in k
+    }
     env["HOME"] = os.environ.get("AGENT_HOME", os.environ.get("HOME", "/home/agent"))
     for name in secret_env:
         if os.environ.get(name):

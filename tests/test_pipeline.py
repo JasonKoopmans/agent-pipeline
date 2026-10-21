@@ -400,3 +400,13 @@ def test_pagination_cannot_escape_the_repo():
 
     with pytest.raises(RepoGuardError):
         GitHub(REPO, token="t", opener=opener).get(f"repos/{REPO}/issues", paginate=True)
+
+
+def test_agent_env_passes_listed_build_settings_but_never_secrets(monkeypatch):
+    monkeypatch.setenv("AGENT_PASS_ENV", "LibraryRestore,MY_API_KEY")
+    monkeypatch.setenv("LibraryRestore", "false")
+    monkeypatch.setenv("MY_API_KEY", "nope")
+    monkeypatch.setenv("NUGET_CERT_REVOCATION_MODE", "offline")
+    env = stages.agent_env()
+    assert env["LibraryRestore"] == "false" and env["NUGET_CERT_REVOCATION_MODE"] == "offline"
+    assert "MY_API_KEY" not in env

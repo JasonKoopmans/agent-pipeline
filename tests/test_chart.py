@@ -94,6 +94,14 @@ def test_egress_is_per_role():
     assert policies["planner"]["spec"]["endpointSelector"]["matchLabels"]["agent-pipeline/role"] == "planner"
 
 
+def test_build_env_reaches_agent_and_verify_only():
+    for role, _, cs in pods(render(*APPS, "--set", "buildEnv.LibraryRestore=false")):
+        for name in ("agent", "verify"):
+            e = {x["name"]: x.get("value") for x in cs[name]["env"]}
+            assert e.get("LibraryRestore") == "false" and e.get("AGENT_PASS_ENV") == "LibraryRestore", (role, name)
+        assert "LibraryRestore" not in env(cs["publish"]) and "LibraryRestore" not in env(cs["prepare"])
+
+
 def test_role_without_any_github_credential_fails():
     with pytest.raises(subprocess.CalledProcessError):
         render()

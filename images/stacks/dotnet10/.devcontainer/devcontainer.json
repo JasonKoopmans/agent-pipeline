@@ -10,10 +10,14 @@
     // (rollForward) picks among installed SDKs.
     "ghcr.io/devcontainers/features/dotnet:2": { "version": "10.0", "installUsingApt": false }
   },
-  // Used by humans opening the devcontainer; pods get the same values from the chart.
+  // devcontainer build bakes these into the image, so agent pods and humans get the same values.
   "containerEnv": {
     "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
-    "DOTNET_NOLOGO": "1"
+    "DOTNET_NOLOGO": "1",
+    // NuGet checks package-signing certificates for revocation over HTTP (OCSP/CRL).
+    // Agent egress only allows NuGet's HTTPS feed, so online checks stall every
+    // package install until timeout (5+ min restores). Signatures are still verified.
+    "NUGET_CERT_REVOCATION_MODE": "offline"
   },
   "remoteUser": "agent",
   "overrideCommand": true,
